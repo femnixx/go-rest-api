@@ -1,17 +1,22 @@
 FROM golang:1.22-alpine AS builder
 
+RUN apk add --no-cache ca-certificates tzdata
+
 WORKDIR /app
 
-COPY go.mod ./
+COPY go.mod ./Dockerfile
+RUN go mod download
 
 COPY . . 
-run CGO_ENABLED=0 GOOS=linux go build -o my-server .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o pinger .
 
-FROM alpine:latest
-WORKDIR /app
+FROM scratch
 
-COPY --from=builder /app/my-server .
+COPY --from=builder /etc/ssl/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+COPY --from=builder /app/pinger /pinger
 
 EXPOSE 8080
 
-CMD ["./my-server"]
+ENTRYPOINT ["/pinger"]

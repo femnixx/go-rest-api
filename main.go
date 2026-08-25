@@ -3,104 +3,98 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"strconv"
+	"os"
 	"sync"
+	"time"
 )
 
-type Task struct {
-	ID        int    `json:"id"`
-	Title     string `json:"title"`
-	Completed bool   `json:"completed"`
+type Result struct {
+	URL        string        `json:"url"`
+	StatusCode int           `json:"status_code"`
+	Latency    time.Duration `json:"latency_ms"`
+	Success    bool          `json:"success"`
+	Error      string        `json:"error,omitempty"`
 }
 
-var (
-	tasks  = []Task{}
-	nextID = 1
-	mutex  sync.Mutex
-)
+func pingURL(url string, client *httplClient, ch chan<- Result, wg *sync.WaitGroup) {
+	defer wg.Done()
 
-func tasksHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	start := time.Now()
+	res, err := client.Get(url)
+	latency := time.Since(start)
 
-	switch r.Method {
-	case http.MethodGet:
-		mutex.Lock()
-		json.NewEncoder(w).Encode(tasks)
-		mutex.Unlock()
-
-	case http.MethodPost:
-		var newTask Task
-		err := json.NewDecoder(r.Body).Decode(&newTask)
-		if err != nil {
-			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
-			return
+	if err != nil { 
+		ch<- Result{
+			URL: url, 
+			Latency: latency / time.Millisecond,
+			Success: false,
+			Error: err.Error(),
 		}
-
-		mutex.Lock()
-		newTask.ID = nextID
-		nextID++
-		tasks = append(tasks, newTask)
-		mutex.Unlock()
-
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(newTask)
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func taskByIdHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	idStr := r.PathValue("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		http.Error(w, "Invalid Task ID", http.StatusBadRequest)
 		return
 	}
+}
+defer res.Body.Close()
 
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	switch r.Method {
-	case http.MethodGet:
-		for _, task := range tasks {
-			if task.ID == id {
-				json.NewEncoder(w).Encode(task)
-				return
-			}
-		}
-		http.Error(w, "Task not found", http.StatusNotFound)
-
-	case http.MethodDelete:
-		for i, task := range tasks {
-			if task.ID == id {
-				tasks = append(tasks[:i], tasks[i+1:]...)
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-		}
-		http.Error(w, "Task not found", http.StatusNotFound)
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+ch<- Result{
+	URL:	url,
+	Statuscode:	res.Statuscod	,
+	Latency: latency / time.Millisecond,
+	Success: res.StatusCode >= 200 && res.StatusCode < 300,
 	}
-
 }
 
+
 func main() {
-	tasks = append(tasks, Task{ID: 1, Title: "Learn go syntax", Completed: true})
-	nextID = 2
+	targets:= []string{
+		"https://google.com",
+		"https://github.com",
+		"https:httpbin.org/status/404",
+		"https://httpbin.org/delay/1",
+	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/tasks", tasksHandler)
-	mux.HandleFunc("POST /api/tasks", tasksHandler)
-	mux.HandleFunc("GET /api/tasks/{id}", taskByIdHandler)
-	mux.HandleFunc("DELETE /api/tasks/{id}", taskByIdHandler)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ch := make(chan Result, len(targets))
+	var wg sync.WaitGroup
 
-	fmt.Println("Go REST API running at http://localhost:8000")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	fmt.Println("Starting Uptime Pinger...")
+
+	for _, url := range targets { 
+		wg.Add(1)
+		go pingUrl(url, cliet	, ch, &wg)
+	}
+
+	wg.Wait()
+	close(ch)
+
+	results := []Result{}
+	for res := range ch { 
+		results = append(results, res)
+	}
+
+	output, _ := json.MarshalIndent(results, "", " ")
+ch := make(chan Result, len(targets))
+	var wg sync.WaitGroup
+
+	fmt.Println("Starting Uptime Pinger...")
+
+	for _, url := range targets { 
+		wg.Add(1)
+		go pingUrl(url, cliet	, ch, &wg)
+	}
+
+	fmt.Println(string(output)int)
+
+	port := os.Getenv("PORT")
+	
+	if port == "" { 
+		port = "8080"
+	}
+	http.Handlefunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status":"healthy"})
+	})
+
+	fmt.Printf("Server listening on port &s for health checks...\n", port)
+		fmt.Printf("Server failed: &s\n", err)
 }
